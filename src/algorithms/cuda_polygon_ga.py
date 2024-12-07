@@ -1,4 +1,6 @@
 import numpy as np
+from numpy.random import MT19937
+from numpy.random import RandomState
 from numba import cuda, float32, int32
 import math
 from algorithms import polygon_helpers
@@ -9,12 +11,35 @@ class CUDAPolygonPacker:
                  boundary_polygon: np.ndarray,
                  regular_polygons: list[tuple[int, float]],
                  population_size: int = 1024,
-                 mutation_rate: float = 0.1):
+                 mutation_rate: float = 0.1,
+                 penalties: dict = None,
+                 random_seed: int = None):
         """Initialize the CUDA-based polygon packing genetic algorithm."""
         self.boundary = boundary_polygon
         self.polygons = regular_polygons
         self.population_size = population_size
         self.mutation_rate = mutation_rate
+        
+        # Initialize RNG with seed
+        self.rng = RandomState(MT19937(seed=random_seed))
+        if random_seed is not None:
+            print(f"Initialized random number generator with seed: {random_seed}")
+        
+        # Set penalties from config or use defaults
+        self.penalties = penalties or {
+            'boundary_penalty': 10000.0,
+            'overlap_penalty': 5000.0,
+            'spacing_penalty': 1000.0
+        }
+
+        # Create penalty array for CUDA
+        self.penalty_array = np.array([
+            self.penalties['boundary_penalty'],
+            self.penalties['overlap_penalty'],
+            self.penalties['spacing_penalty']
+        ], dtype=np.float32)
+
+        print(f"Penalties: {self.penalty_array}")
         
         # Calculate boundary bounds for initialization and mutation
         self.min_x = np.min(boundary_polygon[:, 0])
@@ -33,6 +58,7 @@ class CUDAPolygonPacker:
         self.d_boundary = cuda.to_device(self.boundary)
         self.d_polygon_specs = cuda.to_device(np.array(regular_polygons))
         self.d_fitness = cuda.device_array(population_size, dtype=np.float32)
+        self.d_penalties = cuda.to_device(self.penalty_array)
         
         self.threads_per_block = 256
         self.blocks = (population_size + self.threads_per_block - 1) // self.threads_per_block
@@ -47,11 +73,8 @@ class CUDAPolygonPacker:
             area -= vertices[j][0] * vertices[i][1]
         return abs(area) / 2.0
 
-    # [Previous methods remain the same until calculate_fitness_kernel]
-
     def get_utilization(self, solution):
         """Calculate actual space utilization for the best solution."""
-        # Calculate boundary area (using actual boundary points instead of just bounding box)
         boundary_area = 0.0
         for i in range(len(self.boundary)):
             j = (i + 1) % len(self.boundary)
@@ -123,9 +146,9 @@ class CUDAPolygonPacker:
                 grid_y = safe_min_y + (safe_max_y - safe_min_y) * (j // 3) / 2
                 
                 # Add some random offset from grid position
-                x = grid_x + np.random.uniform(-margin/2, margin/2)
-                y = grid_y + np.random.uniform(-margin/2, margin/2)
-                rotation = np.random.uniform(0, 2 * np.pi)
+                x = grid_x + self.rng.uniform(-margin/2, margin/2)
+                y = grid_y + self.rng.uniform(-margin/2, margin/2)
+                rotation = self.rng.uniform(0, 2 * np.pi)
                 
                 base_idx = j * 3
                 population[i, base_idx] = x
@@ -147,7 +170,8 @@ class CUDAPolygonPacker:
                 self.d_population,
                 self.d_polygon_specs,
                 self.d_boundary,
-                self.d_fitness
+                self.d_fitness,
+                self.d_penalties  # Pass penalties to kernel
             )
             
             fitness = self.d_fitness.copy_to_host()
@@ -167,7 +191,7 @@ class CUDAPolygonPacker:
             d_offspring = cuda.device_array_like(self.d_population)
             
             # Generate random states
-            rand_states = np.random.random(self.population_size * 4)
+            rand_states = self.rng.random(self.population_size * 4)
             d_rand_states = cuda.to_device(rand_states)
             
             # Perform crossover and mutation
@@ -192,7 +216,7 @@ class CUDAPolygonPacker:
         
         tournament_size = 5
         for i in range(self.population_size * 2):
-            candidates = np.random.choice(
+            candidates = self.rng.choice(
                 self.population_size,
                 size=tournament_size,
                 replace=False
@@ -203,7 +227,7 @@ class CUDAPolygonPacker:
         return parents
 
 @cuda.jit
-def calculate_fitness_kernel(population, polygon_specs, boundary, fitness_results):
+def calculate_fitness_kernel(population, polygon_specs, boundary, fitness_results, penalties):
     """CUDA kernel for calculating fitness with penalties."""
     idx = cuda.grid(1)
     if idx >= population.shape[0]:
@@ -218,10 +242,10 @@ def calculate_fitness_kernel(population, polygon_specs, boundary, fitness_result
     
     num_polygons = len(polygon_specs)
     
-    # Penalties
-    BOUNDARY_PENALTY = 10000.0
-    OVERLAP_PENALTY = 5000.0
-    SPACING_PENALTY = 5.0
+    # Use penalties from config array
+    BOUNDARY_PENALTY = penalties[0]  # boundary_penalty
+    OVERLAP_PENALTY = penalties[1]   # overlap_penalty
+    SPACING_PENALTY = penalties[2]   # spacing_penalty
     
     for i in range(num_polygons):
         base_idx1 = i * 3

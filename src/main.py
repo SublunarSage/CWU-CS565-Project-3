@@ -1,51 +1,37 @@
-from visualization.window import Window
 import numpy as np
 import pygame
 from algorithms.cuda_polygon_ga import CUDAPolygonPacker
 from visualization.polygon_viz import draw_solution
 from algorithms.polygon_helpers import compute_polygon_vertices_cpu, check_polygon_collision
+from utils.config_loader import load_config
+
 
 def main():
+    boundary, polygons, ga_params, penalties = load_config('config.yaml')
+
     # Initialize Pygame
     pygame.init()
     screen = pygame.display.set_mode((800, 600))
     pygame.display.set_caption("Polygon Packing Test")
     clock = pygame.time.Clock()
     
-    # Test problem setup
-    # Simple rectangular boundary
-    boundary = np.array([
-        [0, 0],
-        [50, 0],
-        [50, 50],
-        [25, 75],
-        [0, 75],
-        [0, 50]
-    ], dtype=np.float32)
-    
-    # Test with a few regular polygons. Should, in theory, be 100% space utilization.
-    polygons = [
-        (4, 17.0),  # Square
-        (4, 17.0),  # Square
-        (4, 17.0),  # Square
-        (4, 17.0),  # Square
-    ]
     
     # Initialize packer
     packer = CUDAPolygonPacker(
         boundary_polygon=boundary,
         regular_polygons=polygons,
-        population_size=512,
-        mutation_rate=0.3
+        population_size=ga_params['population_size'],
+        mutation_rate=ga_params['mutation_rate'],
+        penalties=penalties,
+        random_seed=ga_params['random_seed']
     )
     
-    
-    
+
     # State variables
     evolution_running = False  # Changed from evolution_started to evolution_running
     evolution_started = False  # Keep track if evolution has ever started
     generation = 0
-    max_generations = 1000
+    max_generations = ga_params['max_generations']
     current_best_solution = None
     best_fitness = float('inf')
     
@@ -157,6 +143,8 @@ def main():
         clock.tick(60)
     
     pygame.quit()
+
+
 
 if __name__ == "__main__":
     main()

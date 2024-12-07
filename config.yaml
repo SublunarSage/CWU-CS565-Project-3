@@ -1,0 +1,29 @@
+# Boundary polygon vertices [x, y]
+boundary:
+  - [0, 0]
+  - [50, 0]
+  - [50, 50]
+  - [25, 75]
+  - [0, 75]
+  - [0, 50]
+
+# Polygons to pack: [number_of_sides, size]
+polygons:
+  - [3, 10.0]  # Triangle
+  - [3, 12.0]  # Triangle
+  - [4, 12.0]  # Square
+  - [6, 18.0]  # Hexagon
+  - [8, 13.0]  # Octagon
+
+# Genetic Algorithm Parameters
+ga_params:
+  population_size: 512
+  mutation_rate: 0.3
+  max_generations: 1000
+  random_seed: 256
+
+# Penalty Weights
+penalties:
+  boundary_penalty: 10000.0
+  overlap_penalty: 5000.0
+  spacing_penalty: 50.0
