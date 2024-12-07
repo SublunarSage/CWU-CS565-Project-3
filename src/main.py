@@ -7,6 +7,21 @@ from utils.config_loader import load_config
 
 
 def main():
+    """
+    Main function that runs the polygon packing visualization application.
+    
+    Loads configuration from config.yaml, initializes the pygame window,
+    and runs the main visualization loop. Controls:
+        - SPACE: Toggle evolution
+        - ESC: Quit application
+    
+    The visualization shows the current best solution with color-coded polygons:
+        - Green: Valid placement
+        - Red: Collision with other polygons
+        - Yellow: Collision with boundary
+        - Pink: Both collision types
+    """
+    
     boundary, polygons, ga_params, penalties = load_config('config.yaml')
 
     # Initialize Pygame

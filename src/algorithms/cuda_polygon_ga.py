@@ -14,7 +14,16 @@ class CUDAPolygonPacker:
                  mutation_rate: float = 0.1,
                  penalties: dict = None,
                  random_seed: int = None):
-        """Initialize the CUDA-based polygon packing genetic algorithm."""
+        """Initialize the CUDA-based polygon packing genetic algorithm.
+
+        Args:
+            boundary_polygon (np.ndarray): Array of (x, y) coordinates defining the boundary polygon
+            regular_polygons (list[tuple[int, float]]): List of (num_sides, size) tuples defining the polygons to pack
+            population_size (int, optional): Size of the genetic algorithm population. Defaults to 1024
+            mutation_rate (float, optional): Probability of mutation per gene. Defaults to 0.1
+            penalties (dict, optional): Dictionary of penalty weights for constraint violations. Defaults to None
+            random_seed (int, optional): Seed for random number generator. Defaults to None for random initialization
+        """
         self.boundary = boundary_polygon
         self.polygons = regular_polygons
         self.population_size = population_size
@@ -63,102 +72,18 @@ class CUDAPolygonPacker:
         self.threads_per_block = 256
         self.blocks = (population_size + self.threads_per_block - 1) // self.threads_per_block
     
-    def _calculate_polygon_area(self, vertices):
-        """Calculate area of a polygon using the shoelace formula."""
-        n = len(vertices)
-        area = 0.0
-        for i in range(n):
-            j = (i + 1) % n
-            area += vertices[i][0] * vertices[j][1]
-            area -= vertices[j][0] * vertices[i][1]
-        return abs(area) / 2.0
-
-    def get_utilization(self, solution):
-        """Calculate actual space utilization for the best solution."""
-        boundary_area = 0.0
-        for i in range(len(self.boundary)):
-            j = (i + 1) % len(self.boundary)
-            boundary_area += (self.boundary[i][0] * self.boundary[j][1] - 
-                            self.boundary[j][0] * self.boundary[i][1])
-        boundary_area = abs(boundary_area) / 2.0
-        
-        # Calculate total area of polygons that are actually within the boundary
-        valid_polygon_area = 0.0
-        for i, (num_sides, size) in enumerate(self.polygons):
-            # Get polygon position and rotation
-            base_idx = i * 3
-            x = solution[base_idx]
-            y = solution[base_idx + 1]
-            rotation = solution[base_idx + 2]
-            
-            # Compute vertices
-            vertices = compute_polygon_vertices_cpu(x, y, rotation, num_sides, size)
-            
-            # Only count area if polygon is fully contained and not overlapping
-            is_contained = check_polygon_collision(vertices, self.boundary, is_boundary=True)
-            is_overlapping = False
-            
-            # Check for overlaps with other polygons
-            for j, (other_sides, other_size) in enumerate(self.polygons):
-                if i != j:
-                    other_base_idx = j * 3
-                    other_x = solution[other_base_idx]
-                    other_y = solution[other_base_idx + 1]
-                    other_rotation = solution[other_base_idx + 2]
-                    other_vertices = compute_polygon_vertices_cpu(
-                        other_x, other_y, other_rotation, other_sides, other_size)
-                    
-                    if check_polygon_collision(vertices, other_vertices):
-                        is_overlapping = True
-                        break
-            
-            # Only add area if polygon is valid
-            if is_contained and not is_overlapping:
-                # For regular polygon, area = (n * s * s * cot(π/n)) / 4
-                # where n is number of sides and s is side length
-                # For our case, size is radius (R), and side length s = 2R*sin(π/n)
-                polygon_area = (num_sides * size * size * 
-                            np.sin(2 * np.pi / num_sides)) / 2
-                valid_polygon_area += polygon_area
-        
-        # Calculate utilization percentage
-        utilization = (valid_polygon_area / boundary_area) * 100
-        return min(100, max(0, utilization))  # Clamp between 0 and 100
-
-    def _initialize_population(self) -> np.ndarray:
-        """Initialize population with better spread of initial positions."""
-        population = np.zeros((self.population_size, self.chromosome_length), dtype=np.float32)
-        
-        # Calculate usable area margins based on largest polygon
-        max_size = max(polygon[1] for polygon in self.polygons)
-        margin = max_size * 1.2  # Add some buffer
-        
-        # Adjust bounds to account for polygon sizes
-        safe_min_x = self.min_x + margin
-        safe_max_x = self.max_x - margin
-        safe_min_y = self.min_y + margin
-        safe_max_y = self.max_y - margin
-        
-        for i in range(self.population_size):
-            for j in range(self.num_polygons):
-                # Grid-based initial positioning
-                grid_x = safe_min_x + (safe_max_x - safe_min_x) * (j % 3) / 2
-                grid_y = safe_min_y + (safe_max_y - safe_min_y) * (j // 3) / 2
-                
-                # Add some random offset from grid position
-                x = grid_x + self.rng.uniform(-margin/2, margin/2)
-                y = grid_y + self.rng.uniform(-margin/2, margin/2)
-                rotation = self.rng.uniform(0, 2 * np.pi)
-                
-                base_idx = j * 3
-                population[i, base_idx] = x
-                population[i, base_idx + 1] = y
-                population[i, base_idx + 2] = rotation
-                
-        return population
-    
     def evolve(self, generations: int):
-        """Evolve the population with improved selection pressure."""
+        """
+        Evolve the population for a specified number of generations.
+
+        Args:
+            generations (int): Number of generations to evolve
+
+        Returns:
+            tuple[list[float], np.ndarray]: Tuple containing:
+                - list of best fitness values for each generation
+                - final population array
+        """
         best_fitness_history = []
         best_solution = None
         
@@ -210,6 +135,108 @@ class CUDAPolygonPacker:
             
         return best_fitness_history, self.population
 
+    def get_utilization(self, solution):
+        """
+        Calculate the space utilization percentage for a given solution.
+
+        Args:
+            solution (np.ndarray): Array of polygon positions and rotations
+
+        Returns:
+            float: Utilization percentage (0-100) representing the ratio of valid polygon area to boundary area
+        """
+        boundary_area = 0.0
+        for i in range(len(self.boundary)):
+            j = (i + 1) % len(self.boundary)
+            boundary_area += (self.boundary[i][0] * self.boundary[j][1] - 
+                            self.boundary[j][0] * self.boundary[i][1])
+        boundary_area = abs(boundary_area) / 2.0
+        
+        # Calculate total area of polygons that are actually within the boundary
+        valid_polygon_area = 0.0
+        for i, (num_sides, size) in enumerate(self.polygons):
+            # Get polygon position and rotation
+            base_idx = i * 3
+            x = solution[base_idx]
+            y = solution[base_idx + 1]
+            rotation = solution[base_idx + 2]
+            
+            # Compute vertices
+            vertices = compute_polygon_vertices_cpu(x, y, rotation, num_sides, size)
+            
+            # Only count area if polygon is fully contained and not overlapping
+            is_contained = check_polygon_collision(vertices, self.boundary, is_boundary=True)
+            is_overlapping = False
+            
+            # Check for overlaps with other polygons
+            for j, (other_sides, other_size) in enumerate(self.polygons):
+                if i != j:
+                    other_base_idx = j * 3
+                    other_x = solution[other_base_idx]
+                    other_y = solution[other_base_idx + 1]
+                    other_rotation = solution[other_base_idx + 2]
+                    other_vertices = compute_polygon_vertices_cpu(
+                        other_x, other_y, other_rotation, other_sides, other_size)
+                    
+                    if check_polygon_collision(vertices, other_vertices):
+                        is_overlapping = True
+                        break
+            
+            # Only add area if polygon is valid
+            if is_contained and not is_overlapping:
+                # For regular polygon, area = (n * s * s * cot(π/n)) / 4
+                # where n is number of sides and s is side length
+                # For our case, size is radius (R), and side length s = 2R*sin(π/n)
+                polygon_area = (num_sides * size * size * 
+                            np.sin(2 * np.pi / num_sides)) / 2
+                valid_polygon_area += polygon_area
+        
+        # Calculate utilization percentage
+        utilization = (valid_polygon_area / boundary_area) * 100
+        return min(100, max(0, utilization))  # Clamp between 0 and 100
+
+    def _calculate_polygon_area(self, vertices):
+        """Calculate area of a polygon using the shoelace formula."""
+        n = len(vertices)
+        area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            area += vertices[i][0] * vertices[j][1]
+            area -= vertices[j][0] * vertices[i][1]
+        return abs(area) / 2.0
+
+    def _initialize_population(self) -> np.ndarray:
+        """Initialize population with better spread of initial positions."""
+        population = np.zeros((self.population_size, self.chromosome_length), dtype=np.float32)
+        
+        # Calculate usable area margins based on largest polygon
+        max_size = max(polygon[1] for polygon in self.polygons)
+        margin = max_size * 1.2  # Add some buffer
+        
+        # Adjust bounds to account for polygon sizes
+        safe_min_x = self.min_x + margin
+        safe_max_x = self.max_x - margin
+        safe_min_y = self.min_y + margin
+        safe_max_y = self.max_y - margin
+        
+        for i in range(self.population_size):
+            for j in range(self.num_polygons):
+                # Grid-based initial positioning
+                grid_x = safe_min_x + (safe_max_x - safe_min_x) * (j % 3) / 2
+                grid_y = safe_min_y + (safe_max_y - safe_min_y) * (j // 3) / 2
+                
+                # Add some random offset from grid position
+                x = grid_x + self.rng.uniform(-margin/2, margin/2)
+                y = grid_y + self.rng.uniform(-margin/2, margin/2)
+                rotation = self.rng.uniform(0, 2 * np.pi)
+                
+                base_idx = j * 3
+                population[i, base_idx] = x
+                population[i, base_idx + 1] = y
+                population[i, base_idx + 2] = rotation
+                
+        return population
+    
     def _tournament_selection(self, fitness: np.ndarray) -> np.ndarray:
         """Enhanced tournament selection with higher selection pressure."""
         parents = np.zeros((self.population_size * 2, self.chromosome_length), dtype=np.float32)

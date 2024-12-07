@@ -2,7 +2,19 @@ import yaml
 import numpy as np
 
 def load_config(config_path: str):
-    """Load configuration from YAML file."""
+    """    
+    Load configuration from YAML file.
+
+    Args:
+        config_path (str): Path to the YAML configuration file
+
+    Returns:
+        tuple containing:
+            - np.ndarray: Boundary polygon vertices
+            - list: List of (num_sides, size) tuples defining polygons
+            - dict: Genetic algorithm parameters
+            - dict: Penalty weights
+    """
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     

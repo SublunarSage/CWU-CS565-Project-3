@@ -10,15 +10,21 @@ def draw_solution(screen: pygame.Surface,
                  scale: float = 1.0,
                  margin: int = 100):
     """
-    Draw the polygon packing solution centered on screen with collision-based colors.
-    
+    Draw the polygon packing solution on the screen.
+
     Args:
-        screen: Pygame surface to draw on
-        boundary: Boundary polygon vertices
-        polygons: List of (num_sides, size) tuples
-        solution: Solution array containing positions and rotations
-        scale: Scale factor for drawing
-        margin: Minimum margin from screen edges
+        screen (pygame.Surface): Pygame surface to draw on
+        boundary (np.ndarray): Boundary polygon vertices
+        polygons (List[Tuple[int, float]]): List of (num_sides, size) tuples
+        solution (np.ndarray): Solution array containing positions and rotations
+        scale (float, optional): Scale factor for drawing. Defaults to 1.0
+        margin (int, optional): Minimum margin from screen edges. Defaults to 100
+
+    Color coding:
+        - Green: Valid placement (no collisions)
+        - Red: Collision with other polygons
+        - Yellow: Collision with boundary
+        - Pink: Both types of collisions
     """
     # Calculate boundary box dimensions
     min_x = min(p[0] for p in boundary)
