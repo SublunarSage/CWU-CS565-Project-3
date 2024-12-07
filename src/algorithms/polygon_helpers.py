@@ -1,6 +1,7 @@
 from numba import cuda, float32, int32
 import math
 import numpy as np
+from typing import List, Tuple, Union
 
 @cuda.jit(device=True)
 def compute_polygon_vertices(center_x: float, center_y: float, 
@@ -132,8 +133,7 @@ def project_polygon(vertices: np.ndarray, num_vertices: int,
     
     return min_proj, max_proj
 
-import numpy as np
-from typing import List, Tuple, Union
+
 
 def compute_polygon_vertices_cpu(center_x: float, center_y: float, 
                                rotation: float, num_sides: int, size: float) -> np.ndarray:
